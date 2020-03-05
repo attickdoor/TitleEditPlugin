@@ -17,16 +17,12 @@ namespace TitleEditPlugin
 
         private readonly TitleEditAddressResolver Address;
 
-        private readonly TitleEditConfiguration Configuration;
-
         private Hook<OnGetTitleMapString> GetTitleMapStringHook;
 
         private byte ExpacNum = 0;
 
         public TitleEdit(SigScanner scanner, ClientState clientState, TitleEditConfiguration configuration)
         {
-            Configuration = configuration;
-
             Address = new TitleEditAddressResolver();
             Address.Setup(scanner);
 
@@ -43,13 +39,11 @@ namespace TitleEditPlugin
         public void Enable()
         {
             GetTitleMapStringHook.Enable();
-           // uiMoEntityIdHook.Enable();
         }
 
         public void Dispose()
         {
             GetTitleMapStringHook.Dispose();
-            //uiMoEntityIdHook.Dispose();
         }
 
         private ulong HandleGetTitleMapString(long param1)

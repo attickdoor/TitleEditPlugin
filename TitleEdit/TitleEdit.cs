@@ -75,7 +75,6 @@ namespace TitleEditPlugin
 
         private ulong HandleGetTitleMapString(long param1)
         {
-            if (LastCall == 255) LastCall = (byte)param1;
             byte tmp = ExpacNum;
             if (tmp == 4)
                 tmp = (byte)new Random().Next(0, 4);

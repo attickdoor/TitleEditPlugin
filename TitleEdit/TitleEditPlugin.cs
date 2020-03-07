@@ -14,7 +14,7 @@ namespace TitleEditPlugin
         private DalamudPluginInterface pluginInterface;
         private TitleEdit titleEdit;
 
-        private string[] ExpacNames = { "A Realm Reborn", "Heavensward", "Stormblood", "Shadowbringers" };
+        private string[] ExpacNames = { "A Realm Reborn", "Heavensward", "Stormblood", "Shadowbringers", "Random" };
         private int ExpacNum;
         private bool isImguiTitleEditOpen = false;
         

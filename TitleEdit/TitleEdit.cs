@@ -80,10 +80,14 @@ namespace TitleEditPlugin
                 tmp = (byte)new Random().Next(0, 4);
             if (param1 == LastCall)
                 return GetTitleMapStringHook.Original(param1);
-            if (param1 == 0)
+            if (Marshal.ReadByte(HasExpacBeenSet) != 1)
+            {
+                GetTitleMapStringHook.Original(param1);
                 Marshal.WriteByte(HighestExpac, tmp);
+            }                
             LastCall = (byte)param1;
-            return GetTitleMapStringHook.Original(param1);
+            if (param1 == 1) return (ulong)TitleScreenNames[0];
+            return (ulong)TitleScreenNames[tmp];
         }
 
         public void SetExpac(byte b)

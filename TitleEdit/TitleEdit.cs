@@ -43,14 +43,14 @@ namespace TitleEditPlugin
         public TitleEdit(SigScanner scanner, ClientState clientState, TitleEditConfiguration configuration)
         {
             TitleScreenNames = new List<IntPtr>();
-            LastCall = 255;
+            LastCall = 200;
 
             Address = new TitleEditAddressResolver();
             Address.Setup(scanner);
 
             byteBase = scanner.Module.BaseAddress;
-            HighestExpac = IntPtr.Add(byteBase, 0x1C48C00);
-            HasExpacBeenSet = IntPtr.Add(byteBase, 0x1C48BFC);
+            HighestExpac = IntPtr.Add(byteBase, 0x1C48B80);
+            HasExpacBeenSet = IntPtr.Add(byteBase, 0x1C48B7C);
 
             Log.Verbose("===== T I T L E E D I T =====");
             Log.Verbose("GetTitleMapString address {0}", Address.GetLobbyMapString);

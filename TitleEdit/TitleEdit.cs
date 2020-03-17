@@ -48,9 +48,8 @@ namespace TitleEditPlugin
             Address = new TitleEditAddressResolver();
             Address.Setup(scanner);
 
-            byteBase = scanner.Module.BaseAddress;
-            HighestExpac = IntPtr.Add(byteBase, 0x1C48B80);
-            HasExpacBeenSet = IntPtr.Add(byteBase, 0x1C48B7C);
+            HighestExpac = scanner.GetStaticAddressFromSig("74 0B 8B 05 ?? ?? ?? ??", 0);
+            HasExpacBeenSet = scanner.GetStaticAddressFromSig("E8 ?? ?? ?? ?? 83 F8 03 77 15", 0x4);
 
             Log.Verbose("===== T I T L E E D I T =====");
             Log.Verbose("GetTitleMapString address {0}", Address.GetLobbyMapString);
@@ -83,8 +82,8 @@ namespace TitleEditPlugin
             if (Marshal.ReadByte(HasExpacBeenSet) != 1)
             {
                 GetTitleMapStringHook.Original(param1);
-                Marshal.WriteByte(HighestExpac, tmp);
-            }                
+            }
+            Marshal.WriteByte(HighestExpac, tmp);
             LastCall = (byte)param1;
             if (param1 == 1) return (ulong)TitleScreenNames[0];
             return (ulong)TitleScreenNames[tmp];

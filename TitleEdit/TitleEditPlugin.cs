@@ -37,8 +37,7 @@ namespace TitleEditPlugin
             SetNewConfig();
 
             this.pluginInterface.UiBuilder.OnBuildUi += UiBuilder_OnBuildUi;
-
-
+            this.pluginInterface.UiBuilder.OnOpenConfigUi += (sender, args) => isImguiTitleEditOpen = true;
         }
 
         private void UiBuilder_OnBuildUi()

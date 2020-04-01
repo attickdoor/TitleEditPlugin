@@ -80,12 +80,13 @@ namespace TitleEditPlugin
 
         private void UpdateConfig()
         {
-            Configuration.ExpacNum = (byte)ExpacNum;
+            Configuration.ExpacNum = ExpacNum;
         }
 
         private void SetNewConfig()
         {
-            titleEdit.SetExpac(Configuration.ExpacNum);
+            if (Configuration.ExpacNum != -1)
+                titleEdit.SetExpac((sbyte)Configuration.ExpacNum);
             ExpacNum = Configuration.ExpacNum;
         }
 

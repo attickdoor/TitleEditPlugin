@@ -7,12 +7,12 @@ namespace TitleEditPlugin
     public class TitleEditConfiguration : IPluginConfiguration
     {
 
-        public byte ExpacNum{ get; set; }
+        public int ExpacNum{ get; set; }
         int IPluginConfiguration.Version { get; set; }
 
         public TitleEditConfiguration()
         {
-            ExpacNum = 0;
+            ExpacNum = -1;
         }
     }
 }

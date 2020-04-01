@@ -13,7 +13,6 @@ namespace TitleEditPlugin
     {
         public delegate ulong OnGetTitleMapString(long param1);
 
-        private readonly IntPtr byteBase;
         private IntPtr HighestExpac;
         private IntPtr HasExpacBeenSet;
         private byte LastCall;
@@ -29,7 +28,7 @@ namespace TitleEditPlugin
 
         private Hook<OnGetTitleMapString> GetTitleMapStringHook;
 
-        private byte ExpacNum = 0;
+        private sbyte ExpacNum = -1;
 
         private IntPtr AllocateString(byte[] buf)
         {
@@ -74,7 +73,8 @@ namespace TitleEditPlugin
 
         private ulong HandleGetTitleMapString(long param1)
         {
-            byte tmp = ExpacNum;
+            if (ExpacNum == -1) return GetTitleMapStringHook.Original(param1);
+            byte tmp = (byte)ExpacNum;
             if (tmp == 4)
                 tmp = (byte)new Random().Next(0, 4);
             if (param1 == LastCall)
@@ -89,7 +89,7 @@ namespace TitleEditPlugin
             return (ulong)TitleScreenNames[tmp];
         }
 
-        public void SetExpac(byte b)
+        public void SetExpac(sbyte b)
         {
             ExpacNum = b;
         }

@@ -17,6 +17,7 @@ namespace TitleEditPlugin
         private string[] ExpacNames = { "A Realm Reborn", "Heavensward", "Stormblood", "Shadowbringers", "Random" };
         private int ExpacNum;
         private bool isImguiTitleEditOpen = false;
+        private bool cutsceneDisabled = false;
         
 
         public void Initialize(DalamudPluginInterface pluginInterface)
@@ -30,7 +31,7 @@ namespace TitleEditPlugin
             });
 
             Configuration = pluginInterface.GetPluginConfig() as TitleEditConfiguration ?? new TitleEditConfiguration();
-
+            cutsceneDisabled = Configuration.DisableCutscene;
             titleEdit = new TitleEdit(pluginInterface.TargetModuleScanner, pluginInterface.ClientState, Configuration);
 
             titleEdit.Enable();
@@ -59,6 +60,8 @@ namespace TitleEditPlugin
 
             ImGui.Combo("Title screen expac to use", ref ExpacNum, ExpacNames, ExpacNames.Length);
 
+            ImGui.Checkbox("Disable Cutscene", ref cutsceneDisabled);
+
             ImGui.PopStyleVar();
 
             ImGui.EndChild();
@@ -81,6 +84,7 @@ namespace TitleEditPlugin
         private void UpdateConfig()
         {
             Configuration.ExpacNum = ExpacNum;
+            Configuration.DisableCutscene = cutsceneDisabled;
         }
 
         private void SetNewConfig()
@@ -88,6 +92,15 @@ namespace TitleEditPlugin
             if (Configuration.ExpacNum != -1)
                 titleEdit.SetExpac((sbyte)Configuration.ExpacNum);
             ExpacNum = Configuration.ExpacNum;
+
+            if (Configuration.DisableCutscene)
+            {
+                titleEdit.DisableCutscene();
+            }
+            else
+            {
+                titleEdit.EnableCutscene();
+            }
         }
 
         public void Dispose()

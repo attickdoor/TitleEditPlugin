@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Dalamud.Game;
@@ -11,6 +12,15 @@ namespace TitleEditPlugin
 {
     public class TitleEdit
     {
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool WriteProcessMemory(
+            IntPtr hProcess,
+            IntPtr lpBaseAddress,
+            byte[] lpBuffer,
+            int nSize,
+            out IntPtr lpNumberOfBytesWritten);
+
         public delegate ulong OnGetTitleMapString(long param1);
 
         private IntPtr HighestExpac;
@@ -52,6 +62,7 @@ namespace TitleEditPlugin
 
             Log.Verbose("===== T I T L E E D I T =====");
             Log.Verbose("GetTitleMapString address {0}", Address.GetLobbyMapString);
+            Log.Verbose("IncrementTitleScreenCutsceneTimer address {0}", Address.IncrementTitleScreenCutsceneTimer);
 
             GetTitleMapStringHook = new Hook<OnGetTitleMapString>(Address.GetLobbyMapString, new OnGetTitleMapString(HandleGetTitleMapString), this);
 
@@ -69,6 +80,17 @@ namespace TitleEditPlugin
         public void Dispose()
         {
             GetTitleMapStringHook.Dispose();
+            EnableCutscene();
+        }
+
+        public void DisableCutscene()
+        {
+            WriteProcessMemory(Process.GetCurrentProcess().Handle, Address.IncrementTitleScreenCutsceneTimer + 1, new byte[] { 0x89, 0xB7 }, 1, out _);
+        }
+
+        public void EnableCutscene()
+        {
+            WriteProcessMemory(Process.GetCurrentProcess().Handle, Address.IncrementTitleScreenCutsceneTimer + 1, new byte[] { 0x01, 0x8F }, 1, out _);
         }
 
         private ulong HandleGetTitleMapString(long param1)

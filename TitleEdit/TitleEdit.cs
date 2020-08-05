@@ -26,6 +26,7 @@ namespace TitleEditPlugin
         private IntPtr HighestExpac;
         private IntPtr HasExpacBeenSet;
         private byte LastCall;
+        private bool overwrittenCutsceneCounter;
 
         private byte[] arrlobbybuf = Encoding.UTF8.GetBytes("ffxiv/zon_z1/chr/z1c1/level/z1c1");
         private byte[] hwlobbybuf = Encoding.UTF8.GetBytes("ex1/05_zon_z2/chr/z2c1/level/z2c1");
@@ -86,11 +87,14 @@ namespace TitleEditPlugin
         public void DisableCutscene()
         {
             WriteProcessMemory(Process.GetCurrentProcess().Handle, Address.IncrementTitleScreenCutsceneTimer + 1, new byte[] { 0x89, 0xB7 }, 1, out _);
+            overwrittenCutsceneCounter = true;
         }
 
         public void EnableCutscene()
         {
+            if (!overwrittenCutsceneCounter) return;
             WriteProcessMemory(Process.GetCurrentProcess().Handle, Address.IncrementTitleScreenCutsceneTimer + 1, new byte[] { 0x01, 0x8F }, 1, out _);
+            overwrittenCutsceneCounter = false;
         }
 
         private ulong HandleGetTitleMapString(long param1)

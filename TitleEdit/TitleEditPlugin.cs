@@ -260,13 +260,16 @@ namespace TitleEdit
                 ImGui.Combo("##titleeditLogoSetting", ref _selectedLogoIndexCreate, _titleLogosCreate, _titleLogosCreate.Length);
                 ImGui.Checkbox("Display logo (ignored if above setting is \"Unspecified\")", ref _selectedLogoVisibleCreate);
 #if DEBUG
-                ImGui.Text("Territype:");
+                ImGui.Text("Terri path:");
                 ImGui.SameLine();
-                ImGui.InputInt("##manualTerritype", ref _tType);
-                if (_territoryPaths.ContainsKey((uint) _tType))
+                ImGui.InputText("##manualTerritype", ref _terriPath, 64);
+                var search = _territoryPaths.Values.Where(row => row.Bg == _terriPath);
+                var results = search as TerritoryType[] ?? search.ToArray();
+                if (results.Any())
                 {
+                    var val = results[0];
                     ImGui.SameLine();
-                    ImGui.Text($"{_territoryPaths[(uint) _tType].PlaceName.Value.Name}");
+                    ImGui.Text($"{val.PlaceName.Value.Name}");
                 }
 #else
                 if (!_territoryPaths.ContainsKey(_pluginInterface.ClientState.TerritoryType))
@@ -406,7 +409,7 @@ namespace TitleEdit
                 scr.Logo = _titleLogosCreate[_selectedLogoIndexCreate];
                 scr.DisplayLogo = _selectedLogoVisibleCreate;
 #if DEBUG
-                scr.TerritoryPath = _territoryPaths[(uint) _tType].Bg.ToString();
+                scr.TerritoryPath = _terriPath;
 #else
                 scr.TerritoryPath = _territoryPaths[_pluginInterface.ClientState.TerritoryType].Bg.ToString();
 #endif
@@ -716,8 +719,6 @@ namespace TitleEdit
                     _isImguiTitleEditOpen = false;
                 }
             }
-
-
             ImGui.EndTabItem();
         }
 
@@ -772,8 +773,8 @@ namespace TitleEdit
 
 #if DEBUG
         private int _wthr;
-        private int _tType;
-
+        private string _terriPath = "";
+        
         private void DrawDebug()
         {
             if (!ImGui.BeginTabItem("Debug"))

@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Numerics;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Dalamud.Hooking;
@@ -95,7 +94,7 @@ namespace TitleEdit
 
             var contents = File.ReadAllText(path);
             _currentScreen = JsonConvert.DeserializeObject<TitleEditScreen>(contents);
-            PluginLog.Log($"Title Edit loaded {path}");
+            PluginLog.Verbose($"Title Edit loaded {path}");
         }
 
         public TitleEdit(DalamudPluginInterface pi, TitleEditConfiguration configuration, string screenDir)
@@ -118,7 +117,7 @@ namespace TitleEdit
 
         private int HandleCreateScene(string p1, uint p2, IntPtr p3, uint p4, IntPtr p5, int p6, uint p7)
         {
-            PluginLog.Log($"HandleCreateScene {p1} {p2} {p3.ToInt64():X} {p4} {p5.ToInt64():X} {p6} {p7}");
+            PluginLog.Verbose($"HandleCreateScene {p1} {p2} {p3.ToInt64():X} {p4} {p5.ToInt64():X} {p6} {p7}");
             _titleCameraNeedsSet = false;
             
             if (IsTitleScreen(p1))
@@ -136,8 +135,8 @@ namespace TitleEdit
         
         private IntPtr HandlePlayMusic(IntPtr self, string filename, float volume, uint fadeTime)
         {
-            PluginLog.Log($"HandlePlayMusic {self.ToInt64():X} {filename} {volume} {fadeTime}");
-            if (filename.EndsWith("_System_Title.scd"))
+            PluginLog.Verbose($"HandlePlayMusic {self.ToInt64():X} {filename} {volume} {fadeTime}");
+            if (filename.EndsWith("_System_Title.scd") && _currentScreen != null)
                 filename = _currentScreen.BgmPath;
             return _playMusicHook.Original(self, filename, volume, fadeTime);
         }
@@ -149,9 +148,9 @@ namespace TitleEdit
             float[] focusPos,
             float fovY)
         {
-            PluginLog.Log($"HandleFixOn {self.ToInt64():X} {cameraPos[0]} {cameraPos[1]} {cameraPos[2]} " +
-                                                                        $"{focusPos[0]} {focusPos[1]} {focusPos[2]} {fovY}");
-            if (!_titleCameraNeedsSet) return _fixOnHook.Original(self, cameraPos, focusPos, fovY);
+            PluginLog.Verbose($"HandleFixOn {self.ToInt64():X} {cameraPos[0]} {cameraPos[1]} {cameraPos[2]} " +
+                              $"{focusPos[0]} {focusPos[1]} {focusPos[2]} {fovY}");
+            if (!_titleCameraNeedsSet || _currentScreen == null) return _fixOnHook.Original(self, cameraPos, focusPos, fovY);
             _titleCameraNeedsSet = false;
             return _fixOnHook.Original(self,
                 FloatArrayFromVector3(_currentScreen.CameraPos),
@@ -161,55 +160,49 @@ namespace TitleEdit
 
         private ulong HandleLoadLogoResource(IntPtr p1, string p2, int p3, int p4)
         {
-            PluginLog.Log($"HandleLoadLogoResource {p1} {p2} {p3} {p4}");
+            PluginLog.Verbose($"HandleLoadLogoResource {p1} {p2} {p3} {p4}");
             ulong result = 1;
 
-            // PluginLog.Log($"loadlogoresource: ");
-            // PluginLog.Log($"\tp1 {p1.ToInt64():X}");
-            // PluginLog.Log($"\tp2 {p2.ToInt64():X}");
-            // PluginLog.Log($"\tp2 str {p2str}");
-            // PluginLog.Log($"\tp3 {p3}");
-            // PluginLog.Log($"\tp4 {p4}");
-
-            if (p2.Contains("Title_Logo"))
+            if (!p2.Contains("Title_Logo") || _currentScreen == null) return _loadLogoResourceHook.Original(p1, p2, p3, p4);
+            
+            var logo = _configuration.SelectedLogoName;
+            var display = _configuration.DisplayTitleLogo;
+            var over = _configuration.Override;
+            if (over == OverrideSetting.UseIfLogoUnspecified && _currentScreen.Logo != "Unspecified")
             {
-                var logo = _configuration.SelectedLogoName;
-                var display = _configuration.DisplayTitleLogo;
-                var over = _configuration.Override;
-                if (over == OverrideSetting.UseIfLogoUnspecified && _currentScreen.Logo != "Unspecified")
-                {
-                    logo = _currentScreen.Logo;
-                    display = _currentScreen.DisplayLogo;
-                }
-                
-                switch (logo)
-                {
-                    case "A Realm Reborn":
-                        result = _loadLogoResourceHook.Original(p1, "Title_Logo", p3, p4);
-                        break;
-                    case "FFXIV Online":
-                        result = _loadLogoResourceHook.Original(p1, "Title_LogoOnline", p3, p4);
-                        break;
-                    case "FFXIV Free Trial":
-                        result = _loadLogoResourceHook.Original(p1, "Title_LogoFT", p3, p4);
-                        break;
-                    case "Heavensward":
-                        result = _loadLogoResourceHook.Original(p1, "Title_Logo300", p3, p4);
-                        break;
-                    case "Stormblood":
-                        result = _loadLogoResourceHook.Original(p1, "Title_Logo400", p3, p4);
-                        break;
-                    case "Shadowbringers":
-                        result = _loadLogoResourceHook.Original(p1, "Title_Logo500", p3, p4);
-                        break;
-                }
-
-                if (!display)
-                    DisableTitleLogo();
-                return result;
+                logo = _currentScreen.Logo;
+                display = _currentScreen.DisplayLogo;
+            }
+            
+            switch (logo)
+            {
+                case "A Realm Reborn":
+                    result = _loadLogoResourceHook.Original(p1, "Title_Logo", p3, p4);
+                    break;
+                case "FFXIV Online":
+                    result = _loadLogoResourceHook.Original(p1, "Title_LogoOnline", p3, p4);
+                    break;
+                case "FFXIV Free Trial":
+                    result = _loadLogoResourceHook.Original(p1, "Title_LogoFT", p3, p4);
+                    break;
+                case "Heavensward":
+                    result = _loadLogoResourceHook.Original(p1, "Title_Logo300", p3, p4);
+                    break;
+                case "Stormblood":
+                    result = _loadLogoResourceHook.Original(p1, "Title_Logo400", p3, p4);
+                    break;
+                case "Shadowbringers":
+                    result = _loadLogoResourceHook.Original(p1, "Title_Logo500", p3, p4);
+                    break;
+                default:
+                    result = _loadLogoResourceHook.Original(p1, "Title_Logo500", p3, p4);
+                    break;
             }
 
-            return _loadLogoResourceHook.Original(p1, p2, p3, p4);
+            if (!display)
+                DisableTitleLogo();
+            return result;
+
         }
         
         public void Enable()
@@ -292,7 +285,7 @@ namespace TitleEdit
             // finishes its animation, it will simply set itself visible again
             Task.Delay(delay).ContinueWith(_ =>
             {
-                PluginLog.Log($"Logo task running after {delay} delay");
+                PluginLog.Verbose($"Logo task running after {delay} delay");
                 IntPtr flag = _pi.Framework.Gui.GetUiObjectByName("_TitleLogo", 1);
                 if (flag == IntPtr.Zero) return;
                 flag = Marshal.ReadIntPtr(flag, logoResNode1Offset);

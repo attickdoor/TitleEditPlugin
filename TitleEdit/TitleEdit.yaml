@@ -1,5 +1,6 @@
 ﻿name: TitleEdit
 author: attick
+load_priority: 10
 description: |-
-  This plugin allows for the title screen to be changed to any expac's title screen.
+  Create, share, and shuffle custom title screens for FFXIV. 
 repo_url: https://github.com/attickdoor/TitleEditPlugin

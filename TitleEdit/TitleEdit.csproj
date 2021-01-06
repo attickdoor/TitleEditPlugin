@@ -158,6 +158,9 @@
         <Content Include="titlescreens\TE_Shadowbringers 2.json">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
+        <Content Include="titlescreens\TE_Titania's Forest.json">
+          <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
         <Content Include="titlescreens\TE_Werlyt.json">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>

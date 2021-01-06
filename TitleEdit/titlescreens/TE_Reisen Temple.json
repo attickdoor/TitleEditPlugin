@@ -1,0 +1,20 @@
+{
+  "Name": "TE_Reisen Temple",
+  "Logo": "Stormblood",
+  "DisplayLogo": false,
+  "TerritoryPath": "ex2/02_est_e3/evt/e3e8/level/e3e8",
+  "CameraPos": {
+    "X": 3.4719916E-37,
+    "Y": 7.623064E-43,
+    "Z": 8.35028E-36
+  },
+  "FixOnPos": {
+    "X": 2.53112842E-37,
+    "Y": -9.403948E-37,
+    "Z": 8.35028E-36
+  },
+  "FovY": 45.0,
+  "WeatherId": 2,
+  "TimeOffset": 0,
+  "BgmPath": "music/ex2/BGM_EX2_Field_Iroha.scd"
+}

@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using Dalamud.Hooking;
 using Dalamud.Plugin;
 using Newtonsoft.Json;
-using TitleEditPlugin;
 
 namespace TitleEdit
 {
@@ -16,18 +15,22 @@ namespace TitleEdit
     {
         [UnmanagedFunctionPointer(CallingConvention.ThisCall, CharSet = CharSet.Ansi)]
         private delegate int OnCreateScene(string p1, uint p2, IntPtr p3, uint p4, IntPtr p5, int p6, uint p7);
+
         private delegate IntPtr OnFixOn(IntPtr self, [MarshalAs(UnmanagedType.LPArray, SizeConst = 3)]
             float[] cameraPos, [MarshalAs(UnmanagedType.LPArray, SizeConst = 3)]
             float[] focusPos, float fovY);
+
         [UnmanagedFunctionPointer(CallingConvention.ThisCall, CharSet = CharSet.Ansi)]
         private delegate ulong OnLoadLogoResource(IntPtr p1, string p2, int p3, int p4);
+
         [UnmanagedFunctionPointer(CallingConvention.ThisCall, CharSet = CharSet.Ansi)]
         private delegate IntPtr OnPlayMusic(IntPtr self, string filename, float volume, uint fadeTime);
+
         private delegate void SetTimePrototype(ushort timeOffset);
 
         // The size of the BGMControl object
         private const int ControlSize = 88;
-        
+
         private readonly DalamudPluginInterface _pi;
         private readonly TitleEditConfiguration _configuration;
 
@@ -40,6 +43,8 @@ namespace TitleEdit
 
         private readonly string _titleScreenBasePath;
         private bool _titleCameraNeedsSet;
+        private bool _amForcingTime;
+        private bool _amForcingWeather;
 
         private TitleEditScreen _currentScreen;
 
@@ -48,6 +53,8 @@ namespace TitleEdit
         {
             Name = "Shadowbringers",
             TerritoryPath = "ex3/05_zon_z4/chr/z4c1/level/z4c1",
+            Logo = "Shadowbringers",
+            DisplayLogo = true,
             CameraPos = new Vector3(0, 5, 10),
             FixOnPos = new Vector3(0, 0, 0),
             FovY = 1,
@@ -59,13 +66,14 @@ namespace TitleEdit
         {
             var files = Directory.GetFiles(_titleScreenBasePath);
             var toLoad = _configuration.SelectedTitleFileName;
-            
+
             if (_configuration.SelectedTitleFileName == "Random")
             {
                 int index = new Random().Next(0, files.Length);
                 // This is a list of files - not a list of title screens
                 toLoad = Path.GetFileNameWithoutExtension(files[index]);
-            } else if (_configuration.SelectedTitleFileName == "Random (custom)")
+            }
+            else if (_configuration.SelectedTitleFileName == "Random (custom)")
             {
                 if (_configuration.TitleList.Count != 0)
                 {
@@ -94,7 +102,7 @@ namespace TitleEdit
 
             var contents = File.ReadAllText(path);
             _currentScreen = JsonConvert.DeserializeObject<TitleEditScreen>(contents);
-            PluginLog.Verbose($"Title Edit loaded {path}");
+            Log($"Title Edit loaded {path}");
         }
 
         public TitleEdit(DalamudPluginInterface pi, TitleEditConfiguration configuration, string screenDir)
@@ -117,30 +125,42 @@ namespace TitleEdit
 
         private int HandleCreateScene(string p1, uint p2, IntPtr p3, uint p4, IntPtr p5, int p6, uint p7)
         {
-            PluginLog.Verbose($"HandleCreateScene {p1} {p2} {p3.ToInt64():X} {p4} {p5.ToInt64():X} {p6} {p7}");
+            Log($"HandleCreateScene {p1} {p2} {p3.ToInt64():X} {p4} {p5.ToInt64():X} {p6} {p7}");
             _titleCameraNeedsSet = false;
-            
+            _amForcingTime = false;
+            _amForcingWeather = false;
+
+            if (IsLobby(p1))
+            {
+                Log("Loading lobby and lobby fixon.");
+                var returnVal = _createSceneHook.Original(p1, p2, p3, p4, p5, p6, p7);
+                FixOn(new Vector3(0, 0, 0), new Vector3(0, 0.8580103f, 0), 1);
+                return returnVal;
+            }
+
             if (IsTitleScreen(p1))
             {
+                Log("Loading custom title.");
                 RefreshCurrentTitleEditScreen();
-                _titleCameraNeedsSet = true;
                 p1 = _currentScreen.TerritoryPath;
-                _createSceneHook.Original(p1, p2, p3, p4, p5, p6, p7);
-                ForceWeather(_currentScreen.WeatherId, 2000);
-                ForceTime(_currentScreen.TimeOffset, 2000);
-                return 0;
+                var returnVal = _createSceneHook.Original(p1, p2, p3, p4, p5, p6, p7);
+                _titleCameraNeedsSet = true;
+                ForceWeather(_currentScreen.WeatherId, 5000);
+                ForceTime(_currentScreen.TimeOffset, 5000);
+                return returnVal;
             }
+
             return _createSceneHook.Original(p1, p2, p3, p4, p5, p6, p7);
         }
-        
+
         private IntPtr HandlePlayMusic(IntPtr self, string filename, float volume, uint fadeTime)
         {
-            PluginLog.Verbose($"HandlePlayMusic {self.ToInt64():X} {filename} {volume} {fadeTime}");
+            Log($"HandlePlayMusic {self.ToInt64():X} {filename} {volume} {fadeTime}");
             if (filename.EndsWith("_System_Title.scd") && _currentScreen != null)
                 filename = _currentScreen.BgmPath;
             return _playMusicHook.Original(self, filename, volume, fadeTime);
         }
-        
+
         private IntPtr HandleFixOn(IntPtr self,
             [MarshalAs(UnmanagedType.LPArray, SizeConst = 3)]
             float[] cameraPos,
@@ -148,9 +168,10 @@ namespace TitleEdit
             float[] focusPos,
             float fovY)
         {
-            PluginLog.Verbose($"HandleFixOn {self.ToInt64():X} {cameraPos[0]} {cameraPos[1]} {cameraPos[2]} " +
-                              $"{focusPos[0]} {focusPos[1]} {focusPos[2]} {fovY}");
-            if (!_titleCameraNeedsSet || _currentScreen == null) return _fixOnHook.Original(self, cameraPos, focusPos, fovY);
+            Log($"HandleFixOn {self.ToInt64():X} {cameraPos[0]} {cameraPos[1]} {cameraPos[2]} " +
+                $"{focusPos[0]} {focusPos[1]} {focusPos[2]} {fovY} | {_titleCameraNeedsSet}");
+            if (!_titleCameraNeedsSet || _currentScreen == null)
+                return _fixOnHook.Original(self, cameraPos, focusPos, fovY);
             _titleCameraNeedsSet = false;
             return _fixOnHook.Original(self,
                 FloatArrayFromVector3(_currentScreen.CameraPos),
@@ -158,13 +179,38 @@ namespace TitleEdit
                 _currentScreen.FovY);
         }
 
+        public TitleEditScreen FixOnCurrent()
+        {
+            Log("Requested FixOnCurrent");
+            if (_currentScreen == null)
+                RefreshCurrentTitleEditScreen();
+            FixOn(_currentScreen.CameraPos, _currentScreen.FixOnPos, _currentScreen.FovY);
+            if (TitleEditAddressResolver.LobbyCamera != IntPtr.Zero)
+                _fixOnHook.Original(TitleEditAddressResolver.LobbyCamera,
+                    FloatArrayFromVector3(_currentScreen.CameraPos),
+                    FloatArrayFromVector3(_currentScreen.FixOnPos),
+                    _currentScreen.FovY);
+            return _currentScreen;
+        }
+
+        public void FixOn(Vector3 cameraPos, Vector3 focusPos, float fov)
+        {
+            Log($"Fixing on {focusPos.X}, {focusPos.Y}, {focusPos.Z} " +
+                $"from {cameraPos.X}, {cameraPos.Y}, {cameraPos.Z} " +
+                $"with FOV {fov}");
+            if (TitleEditAddressResolver.LobbyCamera != IntPtr.Zero)
+                _fixOnHook.Original(TitleEditAddressResolver.LobbyCamera,
+                    FloatArrayFromVector3(cameraPos),
+                    FloatArrayFromVector3(focusPos),
+                    fov);
+        }
+
         private ulong HandleLoadLogoResource(IntPtr p1, string p2, int p3, int p4)
         {
-            PluginLog.Verbose($"HandleLoadLogoResource {p1} {p2} {p3} {p4}");
-            ulong result = 1;
-
             if (!p2.Contains("Title_Logo") || _currentScreen == null) return _loadLogoResourceHook.Original(p1, p2, p3, p4);
-            
+            Log($"HandleLoadLogoResource {p1.ToInt64():X} {p2} {p3} {p4}");
+            ulong result;
+
             var logo = _configuration.SelectedLogoName;
             var display = _configuration.DisplayTitleLogo;
             var over = _configuration.Override;
@@ -173,7 +219,7 @@ namespace TitleEdit
                 logo = _currentScreen.Logo;
                 display = _currentScreen.DisplayLogo;
             }
-            
+
             switch (logo)
             {
                 case "A Realm Reborn":
@@ -202,9 +248,8 @@ namespace TitleEdit
             if (!display)
                 DisableTitleLogo();
             return result;
-
         }
-        
+
         public void Enable()
         {
             _loadLogoResourceHook.Enable();
@@ -223,13 +268,16 @@ namespace TitleEdit
 
         private void ForceTime(ushort timeOffset, int forceTime)
         {
+            _amForcingTime = true;
             Task.Run(() =>
             {
                 Stopwatch stop = Stopwatch.StartNew();
                 do
                 {
                     _setTime(timeOffset);
-                } while (stop.ElapsedMilliseconds < forceTime);
+                } while (stop.ElapsedMilliseconds < forceTime && _amForcingTime);
+
+                Log($"Done forcing time.");
             });
         }
 
@@ -240,6 +288,7 @@ namespace TitleEdit
             {
                 weather = *(byte*) TitleEditAddressResolver.WeatherPtr;
             }
+
             return weather;
         }
 
@@ -250,19 +299,24 @@ namespace TitleEdit
                 *(byte*) TitleEditAddressResolver.WeatherPtr = weather;
             }
         }
-        
+
         private void ForceWeather(byte weather, int forceTime)
         {
+            _amForcingWeather = true;
             Task.Run(() =>
             {
                 Stopwatch stop = Stopwatch.StartNew();
                 do
                 {
                     SetWeather(weather);
-                } while (stop.ElapsedMilliseconds < forceTime);
+                } while (stop.ElapsedMilliseconds < forceTime && _amForcingWeather);
+
+                Log($"Done forcing weather.");
+                Log($"Weather is now {GetWeather()}");
             });
         }
 
+        // TODO: Eventually figure out how to do these without excluding free trial players
         private bool IsTitleScreen(string path)
         {
             return path == "ex3/05_zon_z4/chr/z4c1/level/z4c1" ||
@@ -271,21 +325,24 @@ namespace TitleEdit
             // path == "ffxiv/zon_z1/chr/z1c1/level/z1c1";
         }
 
-        public void DisableTitleLogo(int delay = -1)
+        private bool IsLobby(string path)
         {
-            if (delay == -1)
-                delay = GetLogoDelay();
+            return path == "ffxiv/zon_z1/chr/z1c1/level/z1c1";
+        }
+
+        public void DisableTitleLogo(int delay = 2001)
+        {
             int logoResNode1Offset = 200;
             int logoResNode2Offset = 56;
             int logoResNodeAlphaOffset = 0x73;
             int logoResNodeFlagOffset = 0x9E;
             ushort visibleFlag = 0x10;
 
-            // If we try to set a logo's visibility to soon before it
+            // If we try to set a logo's visibility too soon before it
             // finishes its animation, it will simply set itself visible again
             Task.Delay(delay).ContinueWith(_ =>
             {
-                PluginLog.Verbose($"Logo task running after {delay} delay");
+                Log($"Logo task running after {delay} delay");
                 IntPtr flag = _pi.Framework.Gui.GetUiObjectByName("_TitleLogo", 1);
                 if (flag == IntPtr.Zero) return;
                 flag = Marshal.ReadIntPtr(flag, logoResNode1Offset);
@@ -308,7 +365,7 @@ namespace TitleEdit
                             *(byte*) alpha.ToPointer() = (byte) newAlpha;
                         } while (stop.ElapsedMilliseconds < fadeTime);
                     }
-                    
+
                     // We still want to hide it at the end, though - reset alpha here
                     ushort flagVal = *(ushort*) flag.ToPointer();
                     *(ushort*) flag.ToPointer() = (ushort) (flagVal & ~visibleFlag);
@@ -348,21 +405,21 @@ namespace TitleEdit
                 if (bgmControlSub == IntPtr.Zero) return 0;
                 var bgmControl = Marshal.ReadIntPtr(bgmControlSub + 0xC0);
                 if (bgmControl == IntPtr.Zero) return 0;
-                
+
                 unsafe
                 {
                     var readPoint = (ushort*) bgmControl.ToPointer();
                     readPoint += 6;
-                    
+
                     for (int activePriority = 0; activePriority < 12; activePriority++)
                     {
                         ushort songId1 = readPoint[0];
                         ushort songId2 = readPoint[1];
                         readPoint += ControlSize / 2; // sizeof control / sizeof short
-                            
+
                         if (songId1 == 0)
                             continue;
-                    
+
                         if (songId2 != 0 && songId2 != 9999)
                         {
                             currentSong = songId2;
@@ -371,23 +428,10 @@ namespace TitleEdit
                     }
                 }
             }
+
             return currentSong;
         }
-
-        private int GetLogoDelay()
-        {
-            // These were found manually using LogLogoVisible
-            return _configuration.SelectedLogoName switch
-            {
-                "A Realm Reborn" => 100,
-                "FFXIV Free Trial" => 100,
-                "Heavensward" => 100,
-                "Stormblood" => 2100,
-                "Shadowbringers" => 2100,
-                _ => 3000
-            };
-        }
-
+        
         private float[] FloatArrayFromVector3(Vector3 floats)
         {
             float[] ret = new float[3];
@@ -396,7 +440,7 @@ namespace TitleEdit
             ret[2] = floats.Z;
             return ret;
         }
-        
+
         // This can be used to find new title screen (lol) logo animation lengths
         // public void LogLogoVisible()
         // {
@@ -435,5 +479,13 @@ namespace TitleEdit
         //
         //     start.Stop();
         // }
+
+        private void Log(string s)
+        {
+#if !DEBUG
+            if (_configuration.DebugLogging)
+#endif
+                PluginLog.Log($"[dbg] {s}");
+        }
     }
 }

@@ -102,18 +102,23 @@
     <ItemGroup>
         <Compile Include="BgmSheetManager.cs" />
         <Compile Include="Configuration\TitleEditConfiguration.cs" />
+        <Compile Include="LvbFile.cs" />
         <Compile Include="TitleEdit.cs" />
         <Compile Include="TitleEditAddressResolver.cs" />
+        <Compile Include="TitleEditDebug.cs" />
         <Compile Include="TitleEditPlugin.cs" />
         <Compile Include="Properties\AssemblyInfo.cs" />
         <Compile Include="TitleEditScreen.cs" />
     </ItemGroup>
     <ItemGroup>
         <PackageReference Include="DalamudPackager">
-            <version>1.0.1</version>
+            <version>1.1.0</version>
         </PackageReference>
     </ItemGroup>
     <ItemGroup>
+        <Content Include="bgm.csv">
+          <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
         <Content Include="DalamudPackager.targets" />
         <Content Include="TitleEdit.yaml" />
         <Content Include="titlescreens\A Realm Reborn.json">
@@ -148,6 +153,9 @@
         </Content>
         <Content Include="titlescreens\TE_Don't Ask.json">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="titlescreens\TE_Hell's Kier.json">
+          <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
         <Content Include="titlescreens\TE_Ishgard.json">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

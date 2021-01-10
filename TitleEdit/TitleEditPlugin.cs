@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using Dalamud.Game.ClientState.Actors;
 using Dalamud.Game.Command;
 using Dalamud.Game.Internal;
 using Dalamud.Plugin;
@@ -13,7 +15,6 @@ using ImGuiNET;
 using Lumina.Excel.GeneratedSheets;
 using Newtonsoft.Json;
 using SharpDX;
-using TitleEditPlugin;
 using Vector2 = System.Numerics.Vector2;
 using Vector3 = System.Numerics.Vector3;
 using Vector4 = System.Numerics.Vector4;
@@ -31,6 +32,7 @@ namespace TitleEdit
 
         private TitleEditConfiguration _configuration;
         private DalamudPluginInterface _pluginInterface;
+        private BgmSheetManager _bgmSheet;
         private TitleEdit _titleEdit;
 
         // Settings and other values
@@ -45,6 +47,9 @@ namespace TitleEdit
         private int _selectedTitleIndexExport;
         private int _selectedLogoIndex;
         private bool _fileWasCreatedRecently;
+        private ushort _lastTerritoryId;
+        private ushort[] _territoryWeathers;
+        private float _widestScreenName = 0f;
 
         // Import values
         private TitleEditScreen _importExistsScreen;
@@ -62,16 +67,20 @@ namespace TitleEdit
         private int _selectedLogoIndexCreate = 5;
         private bool _selectedLogoVisibleCreate;
         private string _customTsName = "";
-        private float _fovY = 45f;
+        private float _fovY = 1f;
+        private int _inputIntWeatherId;
         private int _weatherId;
+        private int _selectedWeatherIndex;
         private int _tsTimeHrs;
         private int _tsTimeMin;
         private int _tsTimeOffset;
-        private int _bgmId;
+        private int _selectedBgmId;
+        private string _terriPath = "";
+        private ushort _lastBgmId = 0;
+        private string _songDescription = ""; // This is global so we don't have to do text size calc every frame
 
         private Dictionary<uint, TerritoryType> _territoryPaths;
         private Dictionary<uint, string> _weathers;
-        private Dictionary<uint, string> _bgms;
 
         public void Initialize(DalamudPluginInterface pluginInterface)
         {
@@ -96,12 +105,10 @@ namespace TitleEdit
                 .ToDictionary(row => row.RowId, row => row);
             _weathers = pluginInterface.Data.GetExcelSheet<Weather>()
                 .ToDictionary(row => row.RowId, row => row.Name.ToString());
-            _bgms = pluginInterface.Data.GetExcelSheet<BGM>()
-                .ToDictionary(row => row.RowId, row => row.File.ToString());
-
-            _selectedTitleIndex = GetIndexOfSelectedTitle();
-            _selectedLogoIndex = GetIndexOfSelectedLogo();
-
+            var bgms = pluginInterface.Data.GetExcelSheet<BGM>()
+                .ToDictionary(row => (ushort) row.RowId, row => row.File.ToString());
+            _bgmSheet = new BgmSheetManager(_titleScreenFolder, bgms);
+            
             _titleEdit = new TitleEdit(pluginInterface, _configuration, _titleScreenFolder);
             _titleEdit.Enable();
 
@@ -109,7 +116,7 @@ namespace TitleEdit
             _pluginInterface.Framework.OnUpdateEvent += CheckHotkey;
             _pluginInterface.UiBuilder.OnOpenConfigUi += (_, _) => _isImguiTitleEditOpen = true;
         }
-
+        
         private void PrepareAssets()
         {
             var temp = Path.Combine(Path.GetDirectoryName(AssemblyLocation), "titlescreens");
@@ -134,6 +141,7 @@ namespace TitleEdit
         {
             var tmp =
                 Directory.GetFiles(_titleScreenFolder)
+                    .Where(file => file.EndsWith(".json"))
                     .Select(Path.GetFileNameWithoutExtension)
                     .ToList();
             tmp.Sort();
@@ -157,7 +165,23 @@ namespace TitleEdit
                 removeList.Remove(removeList[0]);
             }
 
+            foreach (var title in _titleScreens)
+            {
+                var size = ImGui.CalcTextSize(title).X;
+                if (size > _widestScreenName)
+                    _widestScreenName = size;
+            }
+            
+            // Update our selected indices because we modified the collections
+            _selectedTitleIndex = GetIndexOfSelectedTitle();
+            _selectedLogoIndex = GetIndexOfSelectedLogo();
+
             _configuration.Save();
+        }
+
+        private float GuiScale(float f)
+        {
+            return f * ImGui.GetIO().FontGlobalScale;
         }
 
         private void CheckHotkey(Framework framework)
@@ -184,10 +208,8 @@ namespace TitleEdit
             if (!_isImguiTitleEditOpen)
                 return;
 
-            ImGui.SetNextWindowSize(new Vector2(500, 370));
-
+            ImGui.SetNextWindowSize(new Vector2(GuiScale(480), GuiScale(450)));
             ImGui.Begin("Title Editing", ref _isImguiTitleEditOpen, ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
-
             ImGui.BeginTabBar("TitleEditMainTabBar");
             DrawCreation();
             DrawManage();
@@ -195,7 +217,7 @@ namespace TitleEdit
             DrawInformation();
             DrawCredits();
 #if DEBUG
-            DrawDebug();
+            TitleEditDebug.DrawDebug(_pluginInterface, _titleEdit, _weathers);
 #endif
             ImGui.EndTabBar();
 
@@ -210,11 +232,16 @@ namespace TitleEdit
 
             ImGui.Text("This tab allows you to create a custom title screen.");
             ImGui.Text("It is recommended to use first-person view.");
-            ImGui.BeginChild("scrolling", new Vector2(0, 240), true, ImGuiWindowFlags.HorizontalScrollbar);
-
+#if DEBUG
+            ImGui.BeginChild("scrolling", new Vector2(0, GuiScale(320)), true, ImGuiWindowFlags.NoScrollbar);
+#else
+            ImGui.BeginChild("scrolling", new Vector2(0, GuiScale(320)), true, ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoScrollbar);
+#endif
             bool stateInvalid;
-            var eyesPos = new Vector3();
-            var lookAt = new Vector3();
+            BgmInfo selectedBgm = new BgmInfo {Title = "Unknown", FilePath = ""};
+            Vector3 eyesPos = default;
+            Vector3 lookAt = default;
+#if !DEBUG
             if (_pluginInterface?.ClientState?.LocalPlayer?.Position == null)
             {
                 ImGui.TextColored(new Vector4(1f, 0f, 0f, 1f), "The current game state is invalid for creating a title screen.");
@@ -222,10 +249,11 @@ namespace TitleEdit
                 _nameEmpty = false; //hax
             }
             else
+#endif
             {
                 ImGui.Text("Name of custom title screen:");
                 ImGui.SameLine();
-                ImGui.PushItemWidth(200f);
+                ImGui.SetNextItemWidth(GuiScale(280f));
                 if (ImGui.InputText("##title_screen_name", ref _customTsName, 64))
                 {
                     _nameEmpty = false;
@@ -233,35 +261,35 @@ namespace TitleEdit
                     _nameAlreadyExists = false;
 
                     if (string.IsNullOrEmpty(_customTsName))
-                    {
                         _nameEmpty = true;
-                    }
                     else if (_customTsName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || _customTsName.StartsWith("TE_"))
-                    {
                         _nameContainsInvalidCharacters = true;
-                    }
                     else
                     {
                         _titleScreenSavePath = Path.Combine(_titleScreenFolder, _customTsName + ".json");
-                        if (File.Exists(_titleScreenSavePath) ||
-                            _customTsName == "Random" ||
-                            _customTsName == "Random (custom)")
-                        {
+                        if (File.Exists(_titleScreenSavePath) || _customTsName == "Random" || _customTsName == "Random (custom)")
                             _nameAlreadyExists = true;
-                        }
                     }
                 }
-                ImGui.PopItemWidth();
 
                 stateInvalid = _nameAlreadyExists | _nameContainsInvalidCharacters | _nameEmpty;
-
+                
                 ImGui.Text("Logo setting:");
                 ImGui.SameLine();
+                if (_titleLogosCreate[_selectedLogoIndexCreate] != "Unspecified")
+                    ImGui.SetNextItemWidth(GuiScale(263f));
+                else
+                    ImGui.SetNextItemWidth(GuiScale(368f));
                 ImGui.Combo("##titleeditLogoSetting", ref _selectedLogoIndexCreate, _titleLogosCreate, _titleLogosCreate.Length);
-                ImGui.Checkbox("Display logo (ignored if above setting is \"Unspecified\")", ref _selectedLogoVisibleCreate);
+                if (_titleLogosCreate[_selectedLogoIndexCreate] != "Unspecified")
+                {
+                    ImGui.SameLine();
+                    ImGui.Checkbox("Display logo", ref _selectedLogoVisibleCreate);
+                }
 #if DEBUG
                 ImGui.Text("Terri path:");
                 ImGui.SameLine();
+                ImGui.SetNextItemWidth(GuiScale(220f));
                 ImGui.InputText("##manualTerritype", ref _terriPath, 64);
                 var search = _territoryPaths.Values.Where(row => row.Bg == _terriPath);
                 var results = search as TerritoryType[] ?? search.ToArray();
@@ -269,7 +297,9 @@ namespace TitleEdit
                 {
                     var val = results[0];
                     ImGui.SameLine();
-                    ImGui.Text($"{val.PlaceName.Value.Name}");
+                    ImGui.PushTextWrapPos(GuiScale(450f));
+                    ImGui.TextWrapped($"{val.PlaceName.Value.Name}");
+                    ImGui.PopTextWrapPos();
                 }
 #else
                 if (!_territoryPaths.ContainsKey(_pluginInterface.ClientState.TerritoryType))
@@ -283,57 +313,119 @@ namespace TitleEdit
                 }
 #endif
 
-                eyesPos = EyesPos(_pluginInterface.ClientState.LocalPlayer.Position);
-                ImGui.Text($"Camera position: {eyesPos.X}, {eyesPos.Y}, {eyesPos.Z}");
+                eyesPos = EyesPos(_pluginInterface.ClientState?.LocalPlayer?.Position ?? new Position3{X = 0, Y = 0, Z = 0});
+                ImGui.Text($"Camera position: {eyesPos.X:F2}, {eyesPos.Y:F2}, {eyesPos.Z:F2}");
 
                 lookAt = LookAt(new SharpDX.Vector3(eyesPos.X, eyesPos.Y, eyesPos.Z));
-                ImGui.Text($"\"Fix-on\" position: {lookAt.X}, {lookAt.Y}, {lookAt.Z}");
+                ImGui.Text($"\"Fix-on\" position: {lookAt.X:F2}, {lookAt.Y:F2}, {lookAt.Z:F2}");
 
-                ImGui.Text("Title camera FOV (this is not reflected in-game):");
+                ImGui.Text("Title camera FOV (in-game FoV will not change)");
                 ImGui.SameLine();
-                ImGui.PushItemWidth(100f);
-                ImGui.InputFloat("##customTsFovY", ref _fovY);
-
+                ImGui.SetNextItemWidth(GuiScale(128f));
+                ImGui.SliderFloat("##customTsFovY", ref _fovY, 0.01f, 3f, "%.2f");
+                ImGui.SameLine();
+                if (ImGui.Button("Reset##resetFovY"))
+                    _fovY = 1f;
+                
                 // Weather
+                var newType = _pluginInterface?.ClientState?.TerritoryType;
+                if (newType.HasValue && newType.Value != _lastTerritoryId)
+                {
+                    _lastTerritoryId = newType.Value;
+                    UpdateWeathers(newType.Value);
+                }
+                
                 byte currentWeather = _titleEdit.GetWeather();
-                _weathers.TryGetValue(currentWeather, out var weatherName);
-                ImGui.Text($"Current weather: {currentWeather}:{weatherName})");
+                ImGui.Text($"Current weather: {GetWeatherDescriptor(currentWeather)}");
                 ImGui.SameLine();
-                if (ImGui.Button("Set##weather"))
+                ImGui.SetCursorPosX(GuiScale(383f));
+                if (ImGui.Button("Set Current##weather"))
+                {
+                    _inputIntWeatherId = currentWeather;
                     _weatherId = currentWeather;
+                    for (int i = 0; i < _territoryWeathers.Length; i++)
+                    {
+                        if (_territoryWeathers[i] != _weatherId) continue;
+                        _selectedWeatherIndex = i;
+                        break;
+                    }
+                }
                 ImGui.Text("Title zone weather:");
                 ImGui.SameLine();
-                ImGui.InputInt("##customTSweather", ref _weatherId);
-                ImGui.SameLine();
-                if (_weatherId < 1 || _weatherId > 255 || !_weathers.ContainsKey((uint) _weatherId))
+#if !DEBUG
+                if (_territoryWeathers == null || _territoryWeathers.Length == 0)
+#endif
                 {
+                    ImGui.SetNextItemWidth(GuiScale(90));
+                    if (ImGui.InputInt("##customTSweather", ref _inputIntWeatherId))
+                        _weatherId = _inputIntWeatherId;
+                }
+#if !DEBUG
+                else
+                {
+                    ImGui.SetNextItemWidth(GuiScale(332f));
+                    if (ImGui.BeginCombo("##customTSweatherCombo", GetWeatherDescriptor(_territoryWeathers[_selectedWeatherIndex])))
+                    {
+                        for (int i = 0; i < _territoryWeathers.Length; i++)
+                        {
+                            if (ImGui.Selectable(GetWeatherDescriptor(_territoryWeathers[i])))
+                            {
+                                _selectedWeatherIndex = i;
+                                _weatherId = _territoryWeathers[_selectedWeatherIndex];
+                            }
+                        }
+                        ImGui.EndCombo();
+                    }
+                }
+#endif
+
+                if (_weatherId < 1 || _weatherId > 255 || !_weathers.ContainsKey((uint) _inputIntWeatherId))
+                {
+                    ImGui.SameLine();
                     ImGui.TextColored(new Vector4(1f, 0f, 0f, 1f), "(invalid)");
                     stateInvalid = true;
                 }
-                else
+                else if (_territoryWeathers == null || _territoryWeathers.Length == 0)
                 {
-                    ImGui.Text($"{_weathers[(uint) _weatherId]}");
+                    ImGui.SameLine();
+                    ImGui.Text(GetWeatherDescriptor((ushort) _weatherId));
                 }
 
                 // Music
-                ushort currentSong = _titleEdit.GetSong();
-                _bgms.TryGetValue(currentSong, out var bgmName);
-                ImGui.Text($"Current song: {currentSong}:{bgmName}");
+                ushort currentBgmId = _titleEdit.GetSong();
+                var currentBgm = _bgmSheet.GetBgmInfo(currentBgmId);
+                if (_lastBgmId != currentBgmId)
+                {
+                    _lastBgmId = currentBgmId;
+                    UpdateBgmDescription(currentBgmId, currentBgm);
+                }
+                ImGui.Text("Current song:");
                 ImGui.SameLine();
-                if (ImGui.Button("Set##music"))
-                    _bgmId = currentSong;
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.5f, 0.5f, 0.5f, 1));
+                ImGui.Text(_songDescription);
+                ImGui.PopStyleColor();
+                if (ImGui.IsItemHovered())
+                    DrawBgmTooltip(currentBgm);
+                ImGui.SameLine();
+                ImGui.SetCursorPosX(GuiScale(383f));
+                if (ImGui.Button("Set Current##music"))
+                    _selectedBgmId = currentBgmId;
                 ImGui.Text("Title zone music:");
                 ImGui.SameLine();
-                ImGui.InputInt("##customTSmusic", ref _bgmId);
+                ImGui.SetNextItemWidth(GuiScale(150f));
+                ImGui.InputInt("##customTSmusic", ref _selectedBgmId);
+                selectedBgm = _bgmSheet.GetBgmInfo((ushort) _selectedBgmId);
+                if (ImGui.IsItemHovered())
+                    DrawBgmTooltip(selectedBgm);
                 ImGui.SameLine();
-                if (_bgmId < 1 || !_bgms.ContainsKey((uint) _bgmId))
+                if (_selectedBgmId < 1 || currentBgm.Title == "Invalid")
                 {
                     ImGui.TextColored(new Vector4(1f, 0f, 0f, 1f), "(invalid)");
                     stateInvalid = true;
                 }
                 else
                 {
-                    ImGui.Text($"{_bgms[(uint) _bgmId]}");
+                    ImGui.TextWrapped($"{selectedBgm.Title}");
                 }
 
                 // Time
@@ -341,24 +433,26 @@ namespace TitleEdit
                 var et = DateTimeOffset.FromUnixTimeSeconds(etS);
                 ImGui.Text($"Current time: {et.Hour:D2}:{et.Minute:D2}");
                 ImGui.SameLine();
-                if (ImGui.Button("Set##time"))
+                ImGui.SetCursorPosX(GuiScale(383f));
+                if (ImGui.Button("Set Current##time"))
                 {
                     _tsTimeHrs = et.Hour;
                     _tsTimeMin = et.Minute;
+                    var scaled = _tsTimeMin / 60f * 100;
+                    _tsTimeOffset = (int) (_tsTimeHrs * 100 + scaled % 100);
                 }
-
-                ImGui.Text("Time: (hr)");
+                ImGui.Text("Time:");
                 ImGui.SameLine();
-                if (ImGui.InputInt("##hrs", ref _tsTimeHrs, 0, 23))
+                float timeWidth = GuiScale(50f);
+                ImGui.SetNextItemWidth(timeWidth);
+                if (ImGui.InputInt("hrs", ref _tsTimeHrs, 0, 23))
                 {
                     var scaled = _tsTimeMin / 60f * 100;
                     _tsTimeOffset = (int) (_tsTimeHrs * 100 + scaled % 100);
                 }
-
                 ImGui.SameLine();
-                ImGui.Text("(min)");
-                ImGui.SameLine();
-                if (ImGui.InputInt("##mins", ref _tsTimeMin, 0, 59))
+                ImGui.SetNextItemWidth(timeWidth);
+                if (ImGui.InputInt("mins", ref _tsTimeMin, 0, 59))
                 {
                     var scaled = _tsTimeMin / 60f * 100;
                     _tsTimeOffset = (int) (_tsTimeHrs * 100 + scaled % 100);
@@ -372,7 +466,6 @@ namespace TitleEdit
             ImGui.Text($"_nameAlreadyExists: {_nameAlreadyExists}");
             ImGui.Text($"_nameContainsInvalidCharacters: {_nameContainsInvalidCharacters}");
 #endif
-
             ImGui.EndChild();
 
             if (_fileWasCreatedRecently)
@@ -383,18 +476,12 @@ namespace TitleEdit
             }
 
             if (_nameEmpty)
-            {
                 ImGui.TextColored(new Vector4(1f, 0f, 0f, 1f), "The title screen name is empty.");
-            }
 
             if (_nameAlreadyExists)
-            {
                 ImGui.TextColored(new Vector4(1f, 0f, 0f, 1f), "A custom title screen already exists by this name.");
-            }
             else if (_nameContainsInvalidCharacters)
-            {
                 ImGui.TextColored(new Vector4(1f, 0f, 0f, 1f), "Title must be a valid filename without extension.");
-            }
 
             if (stateInvalid)
             {
@@ -418,12 +505,13 @@ namespace TitleEdit
                 scr.FovY = _fovY;
                 scr.WeatherId = (byte) _weatherId;
                 scr.TimeOffset = (ushort) _tsTimeOffset;
-                scr.BgmPath = _bgms[(uint) _bgmId];
+                scr.BgmPath = selectedBgm.FilePath;
                 var text = JsonConvert.SerializeObject(scr, Formatting.Indented);
                 bool createSuccess = false;
                 try
                 {
                     File.WriteAllText(_titleScreenSavePath, text);
+                    EnumerateTitleScreenFiles();
                     createSuccess = true;
                 }
                 catch (Exception e)
@@ -437,11 +525,23 @@ namespace TitleEdit
                     _fileWasCreatedRecently = true;
                     Task.Delay(2000).ContinueWith(_ => _fileWasCreatedRecently = false);
                 }
-
-                EnumerateTitleScreenFiles();
             }
 
             ImGui.EndTabItem();
+        }
+
+        private void DrawBgmTooltip(BgmInfo bgm)
+        {
+            ImGui.BeginTooltip();
+            ImGui.PushTextWrapPos(GuiScale(400f));
+            ImGui.TextColored(new Vector4(0, 1, 0, 1), "Song Info");
+            ImGui.TextWrapped($"Title: {bgm.Title}");
+            ImGui.TextWrapped(string.IsNullOrEmpty(bgm.Location) ? "Location: Unknown" : $"Location: {bgm.Location}");
+            if (!string.IsNullOrEmpty(bgm.AdditionalInfo))
+                ImGui.TextWrapped($"Info: {bgm.AdditionalInfo}");
+            ImGui.Text($"File path: {bgm.FilePath}");
+            ImGui.PopTextWrapPos();
+            ImGui.EndTooltip();
         }
 
         private void DrawManage()
@@ -472,7 +572,7 @@ namespace TitleEdit
                 ImGui.SameLine();
                 if (ImGui.Button("Copy"))
                     ImGui.SetClipboardText(_exportRef);
-                ImGui.BeginChild("##exportthingydo", new Vector2(0, 150), true);
+                ImGui.BeginChild("##exportthingydo", new Vector2(0, GuiScale(150)), true);
                 ImGui.TextWrapped(_exportRef);
                 ImGui.EndChild();
             }
@@ -481,9 +581,8 @@ namespace TitleEdit
             {
                 ImGui.Text("Paste import text here:");
                 ImGui.SameLine();
-                ImGui.PushItemWidth(275f);
+                ImGui.SetNextItemWidth(GuiScale(254));
                 ImGui.InputText("##importextThingydo", ref _importRef, 2048);
-                ImGui.PopItemWidth();
                 ImGui.SameLine();
                 TitleEditScreen screen = null;
                 if (ImGui.Button("Import"))
@@ -505,6 +604,7 @@ namespace TitleEdit
                             {
                                 File.WriteAllText(fileName, toImport);
                                 _importName = screen.Name;
+                                EnumerateTitleScreenFiles();
                                 Task.Delay(2000).ContinueWith(_ => _importName = "");
                             }
                             else
@@ -518,7 +618,6 @@ namespace TitleEdit
                                 _importParsed = false;
                                 Task.Delay(2000).ContinueWith(_ => _importParsed = true);
                             }
-                            
                         }
                     }
                 }
@@ -526,7 +625,8 @@ namespace TitleEdit
                 if (!_importParsed)
                 {
                     ImGui.TextColored(new Vector4(1, 0, 0, 1), $"Could not parse input.");
-                } else if (_importExistsScreen != null)
+                }
+                else if (_importExistsScreen != null)
                 {
                     ImGui.TextColored(new Vector4(1, 0, 0, 1), $"A title screen already exists by the name {_importExistsScreen.Name}.");
                     ImGui.Text("Would you like to save this by a different name?");
@@ -566,11 +666,13 @@ namespace TitleEdit
 
             if (ImGui.CollapsingHeader("Installed Screens"))
             {
-                ImGui.BeginChild("scrollingCustomList", new Vector2(400, 150), true, ImGuiWindowFlags.HorizontalScrollbar);
+                var width = GuiScale(_widestScreenName + 100);
+                ImGui.BeginChild("scrollingCustomList", new Vector2(width, GuiScale(150)), true, ImGuiWindowFlags.HorizontalScrollbar);
                 foreach (var titleScreen in _titleScreensExport)
                 {
                     ImGui.Text(titleScreen);
                     ImGui.SameLine();
+                    ImGui.SetCursorPosX(GuiScale(_widestScreenName + 15f));
                     if (ImGui.Button($"Delete##{titleScreen}"))
                     {
                         try
@@ -586,8 +688,9 @@ namespace TitleEdit
                         }
                     }
                 }
-
                 ImGui.EndChild();
+                if (ImGui.Button("Open presets folder"))
+                    Process.Start(_titleScreenFolder);
             }
 
             ImGui.EndChild();
@@ -602,11 +705,16 @@ namespace TitleEdit
         private Vector3 LookAt(SharpDX.Vector3 playerPos)
         {
             var viewMatrix = new Matrix();
-            unsafe
+            
+            var renderCam = TitleEditAddressResolver.RenderCamera;
+            if (renderCam != IntPtr.Zero)
             {
-                var rawMatrix = (float*) (TitleEditAddressResolver.RenderCamera + LookAtOffset).ToPointer();
-                for (var i = 0; i < 16; i++, rawMatrix++)
-                    viewMatrix[i] = *rawMatrix;
+                unsafe
+                {
+                    var rawMatrix = (float*) (renderCam + LookAtOffset).ToPointer();
+                    for (var i = 0; i < 16; i++, rawMatrix++)
+                        viewMatrix[i] = *rawMatrix;
+                }
             }
 
             var result = playerPos + viewMatrix.Left * 10f;
@@ -616,15 +724,70 @@ namespace TitleEdit
         private Vector3 EyesPos(Vector3 playerPos)
         {
             var ret = playerPos;
-            unsafe
-            {
-                var rawVector = (float*) (TitleEditAddressResolver.RenderCamera + EyesPosOffset).ToPointer();
-                ret.X = rawVector[0];
-                ret.Y = rawVector[1];
-                ret.Z = rawVector[2];
-            }
 
+            var renderCam = TitleEditAddressResolver.RenderCamera;
+            if (renderCam != IntPtr.Zero)
+            {
+                unsafe
+                {
+                    var rawVector = (float*) (renderCam + EyesPosOffset).ToPointer();
+                    ret.X = rawVector[0];
+                    ret.Y = rawVector[1];
+                    ret.Z = rawVector[2];
+                }    
+            }
+            
             return ret;
+        }
+
+        private void UpdateWeathers(ushort id)
+        {
+            _territoryWeathers = new ushort[0];
+            var weathers = new List<ushort>();
+            if (!_territoryPaths.TryGetValue(id, out var path)) return;
+            try
+            {
+                var file = _pluginInterface.Data.GetFile<LvbFile>($"bg/{path.Bg}.lvb");
+                if (file?.weatherIds == null || file.weatherIds.Length == 0)
+                    return;
+                foreach (var weather in file.weatherIds)
+                    if (weather > 0 && weather < 255)
+                        weathers.Add(weather);
+                weathers.Sort();
+                _territoryWeathers = weathers.ToArray();
+                if (_territoryWeathers.Length > 0)
+                {
+                    _selectedWeatherIndex = 0;
+                    _weatherId = _territoryWeathers[0];    
+                }
+            }
+            catch (Exception e)
+            {
+                PluginLog.Error(e, $"Failed to load lvb for {path}");
+            }
+        }
+
+        private void UpdateBgmDescription(ushort currentBgmId, BgmInfo currentBgm)
+        {
+            string songDescription = $"({currentBgmId}) {currentBgm.Title}";
+            string truncateFormat = "{0} ... (?)";
+            if (ImGui.CalcTextSize(songDescription).X < 280f)
+                _songDescription = songDescription;
+            else
+            {
+                string tmpDesc = "";
+                int substring = songDescription.Length;
+                do
+                {
+                    tmpDesc = string.Format(truncateFormat, songDescription.Substring(0, substring--));
+                } while (ImGui.CalcTextSize(tmpDesc).X > 280f);
+                _songDescription = tmpDesc;
+            }
+        }
+
+        private string GetWeatherDescriptor(ushort weather)
+        {
+            return _weathers.TryGetValue(weather, out string weatherName) ? $"({weather}) {weatherName}" : $"({weather})";
         }
 
         private void DrawSettings()
@@ -634,14 +797,12 @@ namespace TitleEdit
 
             bool canSave = true;
             ImGui.Text("This window allows you to change what title screen plays when you start the game.");
-            ImGui.Separator();
-            ImGui.BeginChild("scrolling", new Vector2(0, 250), true, ImGuiWindowFlags.HorizontalScrollbar);
-            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 3));
+            ImGui.BeginChild("scrolling", new Vector2(0, GuiScale(341)), true);
             
             ImGui.Combo("Title screen file to use", ref _selectedTitleIndex, _titleScreens, _titleScreens.Length);
             if (_titleScreens[_selectedTitleIndex] == "Random (custom)" && _titleScreens.Length > 2)
             {
-                ImGui.BeginChild("scrollingCustomList", new Vector2(200, 150), true, ImGuiWindowFlags.HorizontalScrollbar);
+                ImGui.BeginChild("scrollingCustomList", new Vector2(GuiScale(200), GuiScale(150)), true, ImGuiWindowFlags.HorizontalScrollbar);
                 foreach (var titleScreen in _titleScreens)
                 {
                     if (titleScreen == "Random" || titleScreen == "Random (custom)")
@@ -661,22 +822,7 @@ namespace TitleEdit
                     canSave = false;
             }
             ImGui.Combo("Title screen logo to use", ref _selectedLogoIndex, _titleLogos, _titleLogos.Length);
-            
-            /*
-             * if (ImGui.BeginCombo("##Cuts", _currentCutPath))
-            {
-                for (int i = 0; i < _cutSheetPaths.Count; i++)
-                {
-                    bool isSelected = _currentCutPath == _cutSheetPaths[i];
-                    if (ImGui.Selectable(_cutSheetPaths[i]))
-                        _currentCutPath = _cutSheetPaths[i];
-                    if (isSelected)
-                        ImGui.SetItemDefaultFocus();
-                }
-		        
-                ImGui.EndCombo();
-            }
-             */
+
             if (ImGui.BeginCombo("Title screen logo override", 
                 GetOverrideSettingString(_configuration.Override)))
             {
@@ -697,9 +843,11 @@ namespace TitleEdit
                 _configuration.DisplayTitleLogo = shouldDisplayLogo;
             }
 
-            ImGui.PopStyleVar();
+            bool debugLogging = _configuration.DebugLogging;
+            if (ImGui.Checkbox("Enable debug logging", ref debugLogging))
+                _configuration.DebugLogging = debugLogging;
+
             ImGui.EndChild();
-            ImGui.Separator();
 
             if (!canSave)
                 ImGui.TextColored(new Vector4(1, 0, 0, 1), "Please select at least two title screens to shuffle between.");
@@ -746,13 +894,8 @@ namespace TitleEdit
             ImGui.TextWrapped("TitleEdit reserves the TE_ suffix on new titles to avoid overwriting player presets.");
             ImGui.TextWrapped("Accessing the lobby, then going back to the title screen will re-load " +
                               "the title screen preset file, allowing for fast iteration on presets.");
-            ImGui.TextWrapped("When specifying a title logo for a title screen preset, remember that " +
-                              "Stormblood and Shadowbringers will linger for a few seconds when set to " +
-                              "not display, while ARR and HW logos will disappear immediately.");
 
             ImGui.TextColored(new Vector4(0, 1, 0, 1), "Known issues");
-            ImGui.TextWrapped("- The FOV setting does not change FOV. Instead, it messes everything up." +
-                              " It is recommended to leave it at 45.");
             ImGui.TextWrapped("- The sun and moon do not exist on title screens.");
             ImGui.TextWrapped("");
 
@@ -770,110 +913,7 @@ namespace TitleEdit
             ImGui.Text("goat - being a caprine individual");
             ImGui.EndTabItem();
         }
-
-#if DEBUG
-        private int _wthr;
-        private string _terriPath = "";
         
-        private void DrawDebug()
-        {
-            if (!ImGui.BeginTabItem("Debug"))
-                return;
-
-            ImGui.BeginChild("scrolling", new Vector2(0, 250), true, ImGuiWindowFlags.HorizontalScrollbar);
-
-            IntPtr flag = _pluginInterface.Framework.Gui.GetUiObjectByName("_TitleLogo", 1);
-            if (flag != IntPtr.Zero)
-            {
-                int logoResNode1Offset = 200;
-                int logoResNode2Offset = 56;
-                int logoResNodeFlagOffset = 0x9E;
-                int logoResNodeAlphaOffset = 0x73;
-                ushort visibleFlag = 0x10;
-
-                if (flag != IntPtr.Zero) ImGui.Text($"_TitleLogo: {flag.ToInt64():X}");
-                flag = Marshal.ReadIntPtr(flag, logoResNode1Offset);
-                if (flag != IntPtr.Zero) ImGui.Text($"ptr + node1: {flag.ToInt64():X}");
-                flag = Marshal.ReadIntPtr(flag, logoResNode2Offset);
-                if (flag != IntPtr.Zero) ImGui.Text($"ptr + node2: {flag.ToInt64():X}");
-                var alpha = flag + logoResNodeAlphaOffset;
-                flag += logoResNodeFlagOffset;
-                ImGui.Text($"ptr + flagOffset: {flag.ToInt64():X}");
-
-                unsafe
-                {
-                    int alphaVal = *(byte*) alpha.ToPointer();
-                    ushort flagVal = *(ushort*) flag.ToPointer();
-                    ImGui.Text($"Visible: {(flagVal & visibleFlag) == visibleFlag}");
-                    if (ImGui.SliderInt("alpha", ref alphaVal, 0, 255))
-                    {
-                        *(byte*) alpha.ToPointer() = (byte) alphaVal;
-                    }
-                }
-            }
-            else
-            {
-                ImGui.Text("_TitleLogo not found!");
-            }
-
-            if (TitleEditAddressResolver.WeatherPtr != IntPtr.Zero)
-            {
-                var weather = _titleEdit.GetWeather();
-                _weathers.TryGetValue(weather, out var weatherStr);
-                ImGui.Text($"weather: {weather} | {weatherStr}");
-                ImGui.InputInt("##wheather", ref _wthr);
-                if (ImGui.Button("weeee"))
-                {
-                    if (_wthr > 0 && _wthr < 255)
-                        _titleEdit.SetWeather((byte) _wthr);
-                }
-            }
-
-            if (TitleEditAddressResolver.BgmControl != IntPtr.Zero)
-            {
-                var bgmControlSub = Marshal.ReadIntPtr(TitleEditAddressResolver.BgmControl);
-                if (bgmControlSub == IntPtr.Zero) ImGui.Text("BgmControlSub was null.");
-                var bgmControl = Marshal.ReadIntPtr(bgmControlSub + 0xC0);
-                if (bgmControl != IntPtr.Zero)
-                {
-                    int currentSong = 0;
-                    int controlSize = 88;
-
-                    unsafe
-                    {
-                        var readPoint = (ushort*) bgmControl.ToPointer();
-                        readPoint += 6;
-
-                        for (int activePriority = 0; activePriority < 12; activePriority++)
-                        {
-                            ushort songId1 = readPoint[0];
-                            ushort songId2 = readPoint[1];
-                            readPoint += controlSize / 2; // sizeof control / sizeof short
-
-                            if (songId1 == 0)
-                                continue;
-
-                            if (songId2 != 0 && songId2 != 9999)
-                            {
-                                currentSong = songId2;
-                                break;
-                            }
-                        }
-                    }
-
-                    ImGui.Text($"song: {currentSong}");
-                }
-            }
-
-            ImGui.Text($"{Assembly.GetAssembly(typeof(DalamudPluginInterface)).Location}");
-            ImGui.Text($"{Path.Combine(Assembly.GetAssembly(typeof(DalamudPluginInterface)).Location, @"..\..\..", "pluginConfigs")}");
-            ImGui.Text($"{Path.GetDirectoryName(Assembly.GetAssembly(typeof(DalamudPluginInterface)).Location)}");
-            ImGui.Text($"{GetPluginConfigFolder()}");
-
-            ImGui.EndChild();
-            ImGui.EndTabItem();
-        }
-#endif
         private string GetPluginConfigFolder()
         {
             var dalamudAssembly = Assembly.GetAssembly(typeof(DalamudPluginInterface)).Location;

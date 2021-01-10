@@ -1,6 +1,6 @@
 ﻿using System.Numerics;
 
-namespace TitleEditPlugin
+namespace TitleEdit
 {
     public class TitleEditScreen
     {
